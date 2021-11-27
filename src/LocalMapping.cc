@@ -160,6 +160,7 @@ void LocalMapping::ProcessNewKeyFrame()
         }
     }    
 
+    // 更新共视关键帧
     // Update links in the Covisibility Graph
     mpCurrentKeyFrame->UpdateConnections();
 
@@ -167,6 +168,9 @@ void LocalMapping::ProcessNewKeyFrame()
     mpMap->AddKeyFrame(mpCurrentKeyFrame);
 }
 
+// 剔除质量较差的地图特征点
+// 1. 成功观测该点的关键帧数/能够观测该点的关键帧数 < 25%
+// 2. 成功观测该点的关键帧数太少
 void LocalMapping::MapPointCulling()
 {
     // Check Recent Added MapPoints
@@ -204,6 +208,7 @@ void LocalMapping::MapPointCulling()
     }
 }
 
+// 运动过程中和共视程度比较高的关键帧通过三角化恢复出一些地图特征点
 void LocalMapping::CreateNewMapPoints()
 {
     // Retrieve neighbor keyframes in covisibility graph
@@ -451,6 +456,8 @@ void LocalMapping::CreateNewMapPoints()
     }
 }
 
+// 相邻关键帧生成的地图特征点融合
+// 如果当前生成的特征点已经和其他关键帧匹配，则用新的替换（似乎没有融合，直接替换）
 void LocalMapping::SearchInNeighbors()
 {
     // Retrieve neighbor keyframes
@@ -629,6 +636,8 @@ void LocalMapping::InterruptBA()
     mbAbortBA = true;
 }
 
+// 关键帧剔除 (在局部BA之后)
+// 如果其90%以上的地图特征点可以被其他共视关键帧（至少3个）观测到，则剔除
 void LocalMapping::KeyFrameCulling()
 {
     // Check redundant keyframes (only local keyframes)

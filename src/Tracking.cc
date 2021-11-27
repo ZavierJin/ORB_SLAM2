@@ -753,7 +753,7 @@ void Tracking::CheckReplacedInLastFrame()
     }
 }
 
-
+// 跟踪关键帧模型：把离自己最近的关键帧当作初始位姿进行优化
 bool Tracking::TrackReferenceKeyFrame()
 {
     // Compute Bag of Words vector
@@ -864,6 +864,7 @@ void Tracking::UpdateLastFrame()
     }
 }
 
+// 恒速跟踪模型：假设下一时刻的运动与前一时刻相同，并作为初始位姿进行优化
 bool Tracking::TrackWithMotionModel()
 {
     ORBmatcher matcher(0.9,true);
@@ -1338,6 +1339,7 @@ void Tracking::UpdateLocalKeyFrames()
     }
 }
 
+// EPNP算法，和openCV中的相似
 bool Tracking::Relocalization()
 {
     // Compute Bag of Words Vector
