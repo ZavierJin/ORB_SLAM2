@@ -163,12 +163,16 @@ void Tracking::SetViewer(Viewer *pViewer)
     mpViewer=pViewer;
 }
 
-
+// 输入左右目图像，可以为RGB、BGR、RGBA、GRAY
+// 1. 将图像转为mImGray和imGrayRight并初始化mCurrentFrame
+// 2. 进行tracking过程
+// 输出世界坐标系到该帧相机坐标系的变换矩阵
 cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp)
 {
     mImGray = imRectLeft;
     cv::Mat imGrayRight = imRectRight;
 
+    // 步骤1：将RGB或RGBA图像转为灰度图像
     if(mImGray.channels()==3)
     {
         if(mbRGB)
@@ -196,8 +200,10 @@ cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRe
         }
     }
 
+    // 步骤2：构造Frame
     mCurrentFrame = Frame(mImGray,imGrayRight,timestamp,mpORBextractorLeft,mpORBextractorRight,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
 
+    // 步骤3：跟踪
     Track();
 
     return mCurrentFrame.mTcw.clone();
@@ -224,6 +230,7 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
             cvtColor(mImGray,mImGray,CV_BGRA2GRAY);
     }
 
+    // 步骤2：将深度相机的disparity转为Depth
     if((fabs(mDepthMapFactor-1.0f)>1e-5) || imDepth.type()!=CV_32F)
         imDepth.convertTo(imDepth,CV_32F,mDepthMapFactor);
 
@@ -254,7 +261,7 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
             cvtColor(mImGray,mImGray,CV_BGRA2GRAY);
     }
 
-    if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)
+    if(mState==NOT_INITIALIZED || mState==NO_IMAGES_YET)    // 没有初始化则提取2倍特征点
         mCurrentFrame = Frame(mImGray,timestamp,mpIniORBextractor,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
     else
         mCurrentFrame = Frame(mImGray,timestamp,mpORBextractorLeft,mpORBVocabulary,mK,mDistCoef,mbf,mThDepth);
@@ -264,13 +271,17 @@ cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
     return mCurrentFrame.mTcw.clone();
 }
 
+// track包含两部分：估计运动、跟踪局部地图
 void Tracking::Track()
 {
+    // mState为：SYSTME_NOT_READY, NO_IMAGE_YET, NOT_INITIALIZED, OK, LOST
+    // 如果图像复位过、或者第一次运行，则为NO_IMAGE_YET状态
     if(mState==NO_IMAGES_YET)
     {
         mState = NOT_INITIALIZED;
     }
 
+    // mLastProcessedState存储了Tracking最新的状态，用于FrameDrawer中的绘制
     mLastProcessedState=mState;
 
     // Get Map Mutex -> Map cannot be changed
@@ -294,7 +305,9 @@ void Tracking::Track()
         bool bOK;
 
         // Initial camera pose estimation using motion model or relocalization (if tracking is lost)
-        if(!mbOnlyTracking)
+        // 在viewer中有个开关menuLocalizationMode，有它控制是否ActivateLocalizationMode，并最终管控mbOnlyTracking
+        // mbOnlyTracking等于false表示正常VO模式（有地图更新），mbOnlyTracking等于true表示用户手动选择定位模式
+        if(!mbOnlyTracking) // 模式1：运动模型失败时使用重定位模型。
         {
             // Local Mapping is activated. This is the normal behaviour, unless
             // you explicitly activate the "only tracking" mode.
@@ -320,7 +333,7 @@ void Tracking::Track()
                 bOK = Relocalization();
             }
         }
-        else
+        else    // 模式2：运动模型与重定位模型同时进行。如果重定位成功，优先选择重定位的结果。
         {
             // Localization Mode: Local Mapping is deactivated
 
@@ -392,9 +405,14 @@ void Tracking::Track()
             }
         }
 
+        // 将最新的关键帧作为reference frame
         mCurrentFrame.mpReferenceKF = mpReferenceKF;
 
         // If we have an initial estimation of the camera pose and matching. Track the local map.
+        // 步骤2.2：在帧间匹配得到初始的姿态后，现在对local map进行跟踪得到更多的匹配，并优化当前位姿
+        // local map:当前帧、当前帧的MapPoints、当前关键帧与其它关键帧共视关系
+        // 在步骤2.1中主要是两两跟踪（恒速模型跟踪上一帧、跟踪参考帧），这里搜索局部关键帧后搜集所有局部MapPoints，
+        // 然后将局部MapPoints和当前帧进行投影匹配，得到更多匹配的MapPoints后进行Pose优化
         if(!mbOnlyTracking)
         {
             if(bOK)
@@ -418,6 +436,8 @@ void Tracking::Track()
         mpFrameDrawer->Update(this);
 
         // If tracking were good, check if we insert a keyframe
+        // 一些变量更新，插入代码可以放在此处。
+        // 其中mTcw比较关键，是相机在世界坐标系下的位姿。
         if(bOK)
         {
             // Update motion model
@@ -454,6 +474,7 @@ void Tracking::Track()
             mlpTemporalPoints.clear();
 
             // Check if we need to insert a new keyframe
+            // 判断是否需要插入关键帧
             if(NeedNewKeyFrame())
                 CreateNewKeyFrame();
 
@@ -486,6 +507,7 @@ void Tracking::Track()
     }
 
     // Store frame pose information to retrieve the complete camera trajectory afterwards.
+    // 步骤3：记录位姿信息，用于轨迹复现
     if(!mCurrentFrame.mTcw.empty())
     {
         cv::Mat Tcr = mCurrentFrame.mTcw*mCurrentFrame.mpReferenceKF->GetPoseInverse();
@@ -928,12 +950,23 @@ bool Tracking::TrackWithMotionModel()
     return nmatchesMap>=10;
 }
 
+/**
+ * @brief 对Local Map的MapPoints进行跟踪
+ * 
+ * 1. 更新局部地图，包括局部关键帧和关键点
+ * 2. 对局部MapPoints进行投影匹配
+ * 3. 根据匹配对估计当前帧的姿态
+ * 4. 根据姿态剔除误匹配
+ * @return true if success
+ * @see V-D track Local Map
+ */
 bool Tracking::TrackLocalMap()
 {
     // We have an estimation of the camera pose and some map points tracked in the frame.
     // We retrieve the local map and try to find matches to points in the local map.
 
-    UpdateLocalMap();
+    // 步骤1：更新局部关键帧mvpLocalKeyFrames和局部地图点mvpLocalMapPoints
+    UpdateLocalMap(); // 双目可以在此处生成MapPoint，单目不行
 
     SearchLocalPoints();
 
@@ -1109,15 +1142,16 @@ void Tracking::CreateNewKeyFrame()
                     mCurrentFrame.mvpMapPoints[i] = static_cast<MapPoint*>(NULL);
                 }
 
+                // 包装MapPoint
                 if(bCreateNew)
                 {
                     cv::Mat x3D = mCurrentFrame.UnprojectStereo(i);
                     MapPoint* pNewMP = new MapPoint(x3D,pKF,mpMap);
-                    pNewMP->AddObservation(pKF,i);
+                    pNewMP->AddObservation(pKF,i);  // MapPoint被哪些关键帧（的特征点？）观测到
                     pKF->AddMapPoint(pNewMP,i);
-                    pNewMP->ComputeDistinctiveDescriptors();
-                    pNewMP->UpdateNormalAndDepth();
-                    mpMap->AddMapPoint(pNewMP);
+                    pNewMP->ComputeDistinctiveDescriptors();    // MapPoint的描述子，取所有可以观测到的关键帧的中值？
+                    pNewMP->UpdateNormalAndDepth(); // MapPoint的主要观测方向
+                    mpMap->AddMapPoint(pNewMP);     // 将MapPoint添加到地图
 
                     mCurrentFrame.mvpMapPoints[i]=pNewMP;
                     nPoints++;
@@ -1133,6 +1167,7 @@ void Tracking::CreateNewKeyFrame()
         }
     }
 
+    // 将关键帧插入局部地图
     mpLocalMapper->InsertKeyFrame(pKF);
 
     mpLocalMapper->SetNotStop(false);
