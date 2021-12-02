@@ -25,6 +25,8 @@
 #include <mutex>
 #include <thread>
 #include <cstdlib>
+#include <unistd.h>
+#include <stdio.h>
 
 using namespace std;
 
